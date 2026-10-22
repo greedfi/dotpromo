@@ -12,11 +12,11 @@
 
 1. Download the pinned file:
    ```
-   curl -fsSL https://raw.githubusercontent.com/greedfi/dotpromo/v1/canvas/builder.tsx -o builder.tsx
+   curl -fsSL https://raw.githubusercontent.com/greedfi/dotpromo/v3/canvas/builder.tsx -o builder.tsx
    ```
 2. Verify it:
    ```
-   echo "40e9a772ac75779f8d4923091f8f179add6ea05a2b6f7e94445f92386b966cea  builder.tsx" | sha256sum -c -
+   echo "d9ab5626aa72e09bfc01190f32f87234225f6e09d771a8862cb6c3ca32f92276  builder.tsx" | sha256sum -c -
    ```
 3. Write it as a canvas exactly as downloaded, unmodified, titled `.promo builder` (reuse the existing Page if there is one).
 

@@ -768,7 +768,9 @@ export default function App() {
   );
   const tc = (s: number) => `0:${pad2(s)}.${pad2((s % 1) * 30)}`;
   const tMinus = `T-0:${pad2(len - time)}`;
-  const stageMax = aspect === "16:9" ? "100%" : aspect === "1:1" ? "min(100%, 64vh)" : "min(100%, calc(64vh * 9 / 16))";
+  // Keep the play/timecode row in the first view (above the phone tab bar).
+  const vMax = `max(240px, calc(100vh - ${phone ? 380 : 400}px))`;
+  const stageMax = aspect === "16:9" ? "100%" : aspect === "1:1" ? `min(100%, ${vMax})` : `min(100%, calc(${vMax} * 9 / 16))`;
 
   const readout = (k: string, v: string): ReactNode => (
     <div key={k} style={{ flex: "1 1 96px", padding: "10px 14px", borderRight: line, borderBottom: line, display: "flex", flexDirection: "column", gap: 2 }}>
@@ -934,7 +936,7 @@ export default function App() {
   };
 
   return (
-    <div ref={rootRef} style={{ fontFamily: font, fontSize: 15, color: t.text.primary, background: t.bg.base, minHeight: "100%", paddingBottom: phone ? 72 : 0 }}>
+    <div ref={rootRef} style={{ fontFamily: font, fontSize: 15, color: t.text.primary, background: t.bg.base, minHeight: "100%" }}>
       <div style={{ position: "sticky", top: 0, zIndex: 5, display: "flex", flexWrap: "wrap", alignItems: "center", gap: 10, padding: "8px 16px", borderBottom: line, background: t.bg.base }}>
         <Mascot dot={t.text.primary} ring={t.bg.base} edge={t.border.strong} size={36} />
         <span style={{ fontSize: 20, fontWeight: 700, letterSpacing: "-0.02em", color: t.text.primary }}>.promo</span>
@@ -991,7 +993,7 @@ export default function App() {
       </div>
 
       {phone && (
-        <div style={{ position: "fixed", left: 0, right: 0, bottom: 0, zIndex: 6, display: "flex", borderTop: line, background: t.bg.base, padding: "0 4px" }}>
+        <div style={{ position: "sticky", bottom: 0, zIndex: 6, display: "flex", borderTop: line, background: t.bg.base, padding: "0 4px" }}>
           {STEPS.map((s: Step) => stepTab(s, true))}
         </div>
       )}

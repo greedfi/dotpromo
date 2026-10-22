@@ -61,7 +61,7 @@ const clamp = (v: number, a: number, b: number) => Math.min(b, Math.max(a, v));
 const pad2 = (n: number) => String(Math.floor(Math.max(0, n))).padStart(2, "0");
 
 // ---------- character drawing (canvas only) ----------
-function eyesAndDot(ctx: CanvasRenderingContext2D, X: (v: number) => number, k: number, dot: string, ring: string, gx = 0, bl = 1, ey = 0) {
+function eyesAndDot(ctx: CanvasRenderingContext2D, X: (v: number) => number, k: number, dot: string, ring: string, gx = 0, bl = 1, ey = 0, eyes = true) {
   ctx.fillStyle = "#101010";
   const eye = (x: number, y: number, rx: number, ry: number) => {
     if (bl < 0) { // happy ^ squint, same shape as the engine's HAPPY layer (quadratic arc over the eye's bbox)
@@ -72,14 +72,16 @@ function eyesAndDot(ctx: CanvasRenderingContext2D, X: (v: number) => number, k: 
     }
     ctx.beginPath(); ctx.ellipse(X(x + gx), X(y + ey), rx * k, ry * k * bl, (-37 * Math.PI) / 180, 0, Math.PI * 2); ctx.fill();
   };
-  eye(22.74, 14.6, 1.8, 4.7);
-  eye(29.5, 12.2, 1.55, 4.6);
+  if (eyes) { // a plain logo (no eyes) never gets eyes, blinks or squints
+    eye(22.74, 14.6, 1.8, 4.7);
+    eye(29.5, 12.2, 1.55, 4.6);
+  }
   ctx.beginPath(); ctx.arc(X(34), X(33), 4.3 * k, 0, Math.PI * 2);
   ctx.fillStyle = dot; ctx.fill();
   ctx.lineWidth = 1.2 * k; ctx.strokeStyle = ring; ctx.stroke();
 }
 
-function promoSprite(S: number, ms: number, dot: string, ring: string, edge: string, gx = 0, bl = 1, ey = 0): HTMLCanvasElement {
+function promoSprite(S: number, ms: number, dot: string, ring: string, edge: string, gx = 0, bl = 1, ey = 0, eyes = true): HTMLCanvasElement {
   const c = document.createElement("canvas");
   c.width = S; c.height = S;
   const ctx = c.getContext("2d");
@@ -119,7 +121,7 @@ function promoSprite(S: number, ms: number, dot: string, ring: string, edge: str
   ctx.fillStyle = H; ctx.fillRect(0, 0, S, S);
   ctx.restore();
   ctx.strokeStyle = edge; ctx.lineWidth = 1 * k; ctx.beginPath(); ctx.arc(X(21), X(20), 15.5 * k, 0, Math.PI * 2); ctx.stroke();
-  eyesAndDot(ctx, X, k, dot, ring, gx, bl, ey);
+  eyesAndDot(ctx, X, k, dot, ring, gx, bl, ey, eyes);
   return c;
 }
 
@@ -338,16 +340,45 @@ function drawTimeline(ctx: CanvasRenderingContext2D, p: TlP) {
 }
 
 // ---------- setup code ----------
-type Setup = { si: number; fi: number; ai: number; li: number; mi: number; ci: number; acc: number; flags: number; order: number[] };
+// PR-<13 fixed chars> (v4, still accepted) + optional "~<base64url JSON>" with everything else:
+// a = animation bitmask (ANIMS order), i = intro index, e = logo has eyes, c = caption lines [[h, s], ...] (null = suggestions),
+// o = "Describe your own" texts, n = which of them are on, x = own style text, w = color wheel hex
+type SetupX = { a: number; i: number; e: boolean; c: [string, string][] | null; o: Record<string, string>; n: string[]; x: string; w: string };
+type Setup = { si: number; fi: number; ai: number; li: number; mi: number; ci: number; acc: number; flags: number; order: number[]; x?: SetupX };
+const b64e = (str: string): string => {
+  const by = new TextEncoder().encode(str); let bin = "";
+  by.forEach((b: number) => { bin += String.fromCharCode(b); });
+  return btoa(bin).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+};
+const b64d = (str: string): string => {
+  const bin = atob(str.replace(/-/g, "+").replace(/_/g, "/") + "===".slice((str.length + 3) % 4));
+  return new TextDecoder().decode(Uint8Array.from(bin, (c: string) => c.charCodeAt(0)));
+};
+const cut = (v: unknown, n: number): string => (typeof v === "string" ? v.slice(0, n) : "");
 function encode(s: Setup): string {
-  return `PR-${s.si}${s.fi}${s.ai}${s.li}${s.mi}${s.ci}${s.acc}${s.flags.toString(16).padStart(2, "0")}${s.order.join("")}`;
+  const base = `PR-${s.si}${s.fi}${s.ai}${s.li}${s.mi}${s.ci}${s.acc}${s.flags.toString(16).padStart(2, "0")}${s.order.join("")}`;
+  return s.x ? `${base}~${b64e(JSON.stringify(s.x))}` : base;
 }
 function decode(code: string): Setup | null {
-  const m = /^PR-([0-4])([0-4])([0-2])([0-2])([0-1])([0-2])([0-6])([0-9a-f]{2})([0-3]{4})$/i.exec(code.trim());
+  const m = /^PR-([0-4])([0-4])([0-2])([0-2])([0-1])([0-2])([0-6])([0-9a-f]{2})([0-3]{4})(?:~([A-Za-z0-9_-]+))?$/i.exec(code.replace(/\s+/g, ""));
   if (!m) return null;
   const order = m[9].split("").map((c: string) => Number(c));
   if (new Set(order).size !== 4) return null;
-  return { si: +m[1], fi: +m[2], ai: +m[3], li: +m[4], mi: +m[5], ci: +m[6], acc: +m[7], flags: parseInt(m[8], 16), order };
+  const s: Setup = { si: +m[1], fi: +m[2], ai: +m[3], li: +m[4], mi: +m[5], ci: +m[6], acc: +m[7], flags: parseInt(m[8], 16), order };
+  if (m[10]) {
+    let j: Record<string, unknown>;
+    try { j = JSON.parse(b64d(m[10])) as Record<string, unknown>; } catch { return null; }
+    if (!j || typeof j !== "object") return null;
+    const o: Record<string, string> = {};
+    if (j.o && typeof j.o === "object") Object.entries(j.o as Record<string, unknown>).slice(0, 20).forEach(([k, v]: [string, unknown]) => { o[k.slice(0, 20)] = cut(v, 500); });
+    const c = Array.isArray(j.c) ? (j.c as unknown[]).slice(0, 12).map((l: unknown): [string, string] => (Array.isArray(l) ? [cut(l[0], 120), cut(l[1], 160)] : ["", ""])) : null;
+    s.x = {
+      a: typeof j.a === "number" ? j.a & 63 : 0, i: j.i === 1 ? 1 : 0, e: j.e !== false, c, o,
+      n: Array.isArray(j.n) ? (j.n as unknown[]).filter((k: unknown): k is string => typeof k === "string").slice(0, 20) : [],
+      x: cut(j.x, 200), w: typeof j.w === "string" && /^#[0-9a-f]{6}$/i.test(j.w) ? j.w : "#00c2a8",
+    };
+  }
+  return s;
 }
 
 // ---------- small canvas components ----------
@@ -663,7 +694,7 @@ function bounceAt(t: number, W: number, H: number, LS: number, finalCx: number, 
   const cy = gy - h - Rr * (1 - sy);
   return { cx: x, cy, sx, sy, st, th, tilt, eyeClose, eyeDy, h, h0 };
 }
-function drawIntro(ctx: CanvasRenderingContext2D, kind: Intro, W: number, H: number, tm: number) {
+function drawIntro(ctx: CanvasRenderingContext2D, kind: Intro, W: number, H: number, tm: number, eyes = true) {
   const bg = "#f6f5fb", ink = "#0f1419";
   ctx.fillStyle = bg; ctx.fillRect(0, 0, W, H);
   const LS = 16, gy = H * 0.5, Bt = BEAT;
@@ -701,7 +732,7 @@ function drawIntro(ctx: CanvasRenderingContext2D, kind: Intro, W: number, H: num
   const ey = b ? b.eyeDy * U : 0;
   if (sc > 0.01) {
     const D = (LS * 46) / 32;
-    const spr36 = promoSprite(40, tm * 1000, ink, bg, "rgba(15,20,25,0.25)", gx, bl, ey);
+    const spr36 = eyes ? promoSprite(40, tm * 1000, ink, bg, "rgba(15,20,25,0.25)", gx, bl, ey) : promoSprite(40, tm * 1000, ink, bg, "rgba(15,20,25,0.25)", 0, 1, 0, false);
     ctx.save();
     if (b) { // engine transform chain: squash about the contact point, stretch along velocity, tilt into travel
       const c = LS / 2;
@@ -732,7 +763,7 @@ function drawIntro(ctx: CanvasRenderingContext2D, kind: Intro, W: number, H: num
   });
 }
 const INTRO_LOOP = 5.2;
-function IntroTile({ kind }: { kind: Intro }) {
+function IntroTile({ kind, eyes }: { kind: Intro; eyes: boolean }) {
   const ref = useRef<HTMLCanvasElement>(null);
   useEffect(() => {
     const c = ref.current;
@@ -743,14 +774,14 @@ function IntroTile({ kind }: { kind: Intro }) {
     if (!ctx) return;
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     const reduce = typeof window.matchMedia === "function" && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-    if (reduce) { drawIntro(ctx, kind, W, H, 4.6); return; }
+    if (reduce) { drawIntro(ctx, kind, W, H, 4.6, eyes); return; }
     let raf = 0;
     const t0 = performance.now();
-    const loop = (now: number) => { drawIntro(ctx, kind, W, H, (((now - t0) / 1000) % INTRO_LOOP) - 0.3); raf = requestAnimationFrame(loop); };
+    const loop = (now: number) => { drawIntro(ctx, kind, W, H, (((now - t0) / 1000) % INTRO_LOOP) - 0.3, eyes); raf = requestAnimationFrame(loop); };
     raf = requestAnimationFrame(loop);
     return () => cancelAnimationFrame(raf);
-  }, [kind]);
-  return <canvas ref={ref} aria-label={`${kind} intro preview`} role="img" style={{ width: 72, height: 44, display: "block", flexShrink: 0, borderRadius: 8 }} />;
+  }, [kind, eyes]);
+  return <canvas ref={ref} aria-label={`${kind} intro preview, ${eyes ? "with" : "without"} eyes`} role="img" style={{ width: 72, height: 44, display: "block", flexShrink: 0, borderRadius: 8 }} />;
 }
 
 function Icon({ step, color }: { step: Step; color: string }) {
@@ -806,6 +837,7 @@ export default function App() {
   const [acc, setAcc] = useState<number>(0);
   const [anims, setAnims] = useState<Anim[]>(ANIM_DEFAULT);
   const [intro, setIntro] = useState<Intro>("Bounce");
+  const [eyes, setEyes] = useState<boolean>(true);
   const [capEdit, setCapEdit] = useState<CapLine[] | null>(null);
   const [own, setOwn] = useState<Record<string, string>>({});
   const [ownOn, setOwnOn] = useState<Record<string, boolean>>({});
@@ -904,7 +936,7 @@ export default function App() {
   if (brand) reqParts.push("brand colors from my logo");
   reqParts.push(caps ? `captions on (${capLook} style)` : "no captions");
   if (beat) reqParts.push("cuts on the beat");
-  reqParts.push(`intro: ${intro.toLowerCase()}`);
+  reqParts.push(`intro: ${intro.toLowerCase()}`, `logo has eyes: ${eyes ? "yes" : "no"}`);
   const animSel = ANIMS.map(([a]: [Anim, string]) => a).filter((a: Anim) => anims.includes(a));
   if (animSel.length || ownTxt("anims")) reqParts.push(`animations: ${animSel.length ? animSel.map((a: Anim) => a.toLowerCase()).join(", ") : "none"}${cx("anims")}`);
   reqParts.push(`scene order ${order.map((i: number) => i + 1).join("-")}${cx("scenes")}`);
@@ -934,6 +966,13 @@ export default function App() {
     mi: MUSICS.findIndex(([m]: [Music, string]) => m === music), ci: CAPSTYLES.indexOf(capStyle), acc,
     flags: [brand, caps, beat, false, remember, pack].reduce((a: number, b: boolean, i: number) => a | (b ? 1 << i : 0), 0),
     order,
+    x: {
+      a: ANIMS.reduce((m: number, [a]: [Anim, string], i: number) => m | (anims.includes(a) ? 1 << i : 0), 0),
+      i: INTROS.findIndex(([n]: [Intro, string]) => n === intro), e: eyes,
+      c: capEdit ? capEdit.map((l: CapLine): [string, string] => [l.h, l.s]) : null,
+      o: Object.fromEntries(Object.entries(own).filter(([, v]: [string, string]) => v)),
+      n: Object.keys(ownOn).filter((k: string) => ownOn[k]), x: custom, w: wheelHex,
+    },
   };
   const code = encode(setup);
   const apply = (s: Setup) => {
@@ -941,6 +980,12 @@ export default function App() {
     setMusic(MUSICS[s.mi][0]); setCapStyle(CAPSTYLES[s.ci]); setAcc(s.acc); setOrder(s.order);
     const f = (i: number) => (s.flags & (1 << i)) !== 0;
     setBrand(f(0)); setCaps(f(1)); setBeat(f(2)); setRemember(f(4)); setPack(f(5));
+    const x = s.x; // older codes carry none of these: fall back to the defaults
+    setAnims(x ? ANIMS.map(([a]: [Anim, string]) => a).filter((_: Anim, i: number) => (x.a & (1 << i)) !== 0) : ANIM_DEFAULT);
+    setIntro(x ? INTROS[x.i][0] : "Bounce"); setEyes(x ? x.e : true);
+    setCapEdit(x && x.c ? x.c.map(([h, sub]: [string, string]) => ({ h, s: sub })) : null);
+    setOwn(x ? x.o : {}); setOwnOn(x ? Object.fromEntries(x.n.map((k: string) => [k, true])) : {});
+    setCustom(x ? x.x : ""); if (x) setWheelHex(x.w);
     setTime(0);
   };
   const surprise = () => {
@@ -949,7 +994,7 @@ export default function App() {
     apply({
       si: Math.floor(Math.random() * 4), fi: Math.floor(Math.random() * 5), ai: Math.floor(Math.random() * 3), li: Math.floor(Math.random() * 3),
       mi: 0, ci: Math.floor(Math.random() * 3), acc: Math.floor(Math.random() * 6),
-      flags: 1 | 2 | 4 | (Math.random() < 0.3 ? 32 : 0), order: [0, ...ord],
+      flags: 1 | 2 | 4 | (Math.random() < 0.3 ? 32 : 0), order: [0, ...ord], x: setup.x, // keep animations, captions and own texts
     });
     setPlaying(true);
     setNote("Surprise picks applied");
@@ -1298,7 +1343,8 @@ export default function App() {
         {groupLabel("Accent", "Buttons, highlights and the playhead")}
         {accentPicker}
         {groupLabel("Animations", "Pick any. Each tile is a live preview")}
-        {INTROS.map(([n, d]: [Intro, string]) => rowBtn(`in-${n}`, `${n} intro`, d, radio(intro === n), () => setIntro(n), <IntroTile kind={n} />))}
+        {INTROS.map(([n, d]: [Intro, string]) => rowBtn(`in-${n}`, `${n} intro`, d, radio(intro === n), () => setIntro(n), <IntroTile kind={n} eyes={eyes} />))}
+        {rowBtn("eyes", "Logo has eyes", eyes ? "Preview: your logo blinks and squints as it lands" : "Preview: plain logo, it squashes and wobbles, no eyes", sw(eyes), () => setEyes(!eyes))}
         {ANIMS.map(([a, d]: [Anim, string]) => rowBtn(`an-${a}`, a, d, sw(anims.includes(a)),
           () => setAnims(anims.includes(a) ? anims.filter((x: Anim) => x !== a) : [...anims, a]), <AnimTile kind={a} A={A} />))}
         {ownRow("anims", "e.g. confetti when the price shows up")}
@@ -1360,7 +1406,7 @@ export default function App() {
         <div style={{ borderTop: line }} />
         {groupLabel("Setup code", "Share it, or paste one to load it")}
         <div style={{ padding: "0 16px 16px", display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center" }}>
-          <span style={{ fontSize: 17, fontWeight: 700, userSelect: "all", letterSpacing: "0.02em", fontVariantNumeric: "tabular-nums" }}>{code}</span>
+          <span style={{ fontSize: 17, fontWeight: 700, userSelect: "all", letterSpacing: "0.02em", fontVariantNumeric: "tabular-nums", wordBreak: "break-all", maxWidth: "100%" }}>{code}</span>
           {quietBtn("Copy code", () => copyText(code, "Code copied"))}
         </div>
         <div style={{ padding: "0 16px 16px", display: "flex", flexWrap: "wrap", gap: 8 }}>

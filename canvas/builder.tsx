@@ -47,8 +47,10 @@ const MAIL_URL = "https://x.ai/bot/HdN8nshqGbNy_Le0fSi_6";
 
 function inkFor(hex: string): string {
   const n = parseInt(hex.slice(1), 16);
-  const l = 0.299 * ((n >> 16) & 255) + 0.587 * ((n >> 8) & 255) + 0.114 * (n & 255);
-  return l > 160 ? "#000000" : "#ffffff";
+  const lin = (c: number) => { const v = c / 255; return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4); };
+  const L = 0.2126 * lin((n >> 16) & 255) + 0.7152 * lin((n >> 8) & 255) + 0.0722 * lin(n & 255);
+  // WCAG: pick whichever ink has the higher contrast ratio on this fill.
+  return (L + 0.05) / 0.05 >= 1.05 / (L + 0.05) ? "#000000" : "#ffffff";
 }
 const clamp = (v: number, a: number, b: number) => Math.min(b, Math.max(a, v));
 const pad2 = (n: number) => String(Math.floor(Math.max(0, n))).padStart(2, "0");
@@ -66,7 +68,7 @@ function eyesAndDot(ctx: CanvasRenderingContext2D, X: (v: number) => number, k: 
   ctx.lineWidth = 1.2 * k; ctx.strokeStyle = ring; ctx.stroke();
 }
 
-function promoSprite(S: number, ms: number, ring: string): HTMLCanvasElement {
+function promoSprite(S: number, ms: number, dot: string, ring: string, edge: string): HTMLCanvasElement {
   const c = document.createElement("canvas");
   c.width = S; c.height = S;
   const ctx = c.getContext("2d");
@@ -105,11 +107,12 @@ function promoSprite(S: number, ms: number, ring: string): HTMLCanvasElement {
   H.addColorStop(1, "rgba(255,255,255,0)");
   ctx.fillStyle = H; ctx.fillRect(0, 0, S, S);
   ctx.restore();
-  eyesAndDot(ctx, X, k, "#ffffff", ring);
+  ctx.strokeStyle = edge; ctx.lineWidth = 1 * k; ctx.beginPath(); ctx.arc(X(21), X(20), 15.5 * k, 0, Math.PI * 2); ctx.stroke();
+  eyesAndDot(ctx, X, k, dot, ring);
   return c;
 }
 
-function drawMailBall(ctx: CanvasRenderingContext2D, S: number, dot: string, ring: string) {
+function drawMailBall(ctx: CanvasRenderingContext2D, S: number, dot: string, ring: string, edge: string) {
   const k = S / 46;
   const X = (v: number) => (v + 2) * k;
   ctx.save();
@@ -133,7 +136,7 @@ function drawMailBall(ctx: CanvasRenderingContext2D, S: number, dot: string, rin
   ([[17, 28, 1.5, "#FBBC05"], [28.5, 31.5, 1.3, "#EA4335"], [31, 24.5, 1.25, "#4285F4"], [7.5, 18.5, 1.15, "#34A853"], [24, 34, 1.15, "#FBBC05"], [12, 9.5, 1.05, "#4285F4"]] as [number, number, number, string][])
     .forEach(([x, y, r, col]: [number, number, number, string]) => { ctx.fillStyle = col; ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill(); });
   ctx.restore();
-  ctx.strokeStyle = "rgba(15,20,25,0.12)"; ctx.lineWidth = 0.8; ctx.beginPath(); ctx.arc(21, 20, 15.6, 0, Math.PI * 2); ctx.stroke();
+  ctx.strokeStyle = edge; ctx.lineWidth = 1; ctx.beginPath(); ctx.arc(21, 20, 15.6, 0, Math.PI * 2); ctx.stroke();
   ctx.restore();
   eyesAndDot(ctx, X, k, dot, ring);
 }
@@ -393,7 +396,7 @@ function Fill({ color, text, font, size }: { color: string; text?: string; font?
   );
 }
 
-function Mascot({ ring, size }: { ring: string; size: number }) {
+function Mascot({ dot, ring, edge, size }: { dot: string; ring: string; edge: string; size: number }) {
   const ref = useRef<HTMLCanvasElement>(null);
   useEffect(() => {
     const c = ref.current;
@@ -404,19 +407,19 @@ function Mascot({ ring, size }: { ring: string; size: number }) {
     let raf = 0;
     const loop = (ms: number) => {
       ctx.clearRect(0, 0, 132, 132);
-      ctx.drawImage(promoSprite(132, ms, ring), 0, 0);
+      ctx.drawImage(promoSprite(132, ms, dot, ring, edge), 0, 0);
       raf = requestAnimationFrame(loop);
     };
     raf = requestAnimationFrame(loop);
     return () => cancelAnimationFrame(raf);
-  }, [ring]);
+  }, [dot, ring, edge]);
   return <canvas ref={ref} style={{ width: size, height: size, display: "block", flexShrink: 0 }} />;
 }
 
-function MailBall({ dot, ring, size }: { dot: string; ring: string; size: number }) {
+function MailBall({ dot, ring, edge, size }: { dot: string; ring: string; edge: string; size: number }) {
   return (
     <div style={{ width: size, height: size, flexShrink: 0 }}>
-      <Paint draw={(ctx: CanvasRenderingContext2D, w: number) => drawMailBall(ctx, w, dot, ring)} label=".mail character" />
+      <Paint draw={(ctx: CanvasRenderingContext2D, w: number) => drawMailBall(ctx, w, dot, ring, edge)} label=".mail character" />
     </div>
   );
 }
@@ -654,16 +657,24 @@ export default function App() {
   );
   const radio = (on: boolean): ReactNode => on ? (
     <span style={{ position: "relative", width: 22, height: 22, flexShrink: 0, borderRadius: t.radius.full, overflow: "hidden" }}>
-      <Fill color={A} />
-      <span style={{ position: "absolute", top: 7, left: 7, width: 8, height: 8, borderRadius: t.radius.full, background: t.bg.base }} />
+      <Paint style={{ position: "absolute", inset: 0 }} draw={(ctx: CanvasRenderingContext2D, w: number, h: number) => {
+        ctx.fillStyle = A; ctx.fillRect(0, 0, w, h);
+        ctx.fillStyle = inkFor(A); ctx.beginPath(); ctx.arc(w / 2, h / 2, 4, 0, Math.PI * 2); ctx.fill();
+      }} />
     </span>
   ) : (
     <span style={{ width: 22, height: 22, flexShrink: 0, borderRadius: t.radius.full, boxSizing: "border-box", border: `2px solid ${t.border.strong}` }} />
   );
   const sw = (on: boolean): ReactNode => (
-    <span style={{ width: 44, height: 26, flexShrink: 0, borderRadius: t.radius.full, position: "relative", overflow: "hidden", background: t.fill.secondaryHover }}>
-      {on && <Fill color={A} />}
-      <span style={{ position: "absolute", top: 3, left: on ? 21 : 3, width: 20, height: 20, borderRadius: t.radius.full, background: t.bg.elevated, transition: t.motion.hover }} />
+    <span style={{ width: 44, height: 26, flexShrink: 0, borderRadius: t.radius.full, position: "relative", overflow: "hidden", background: t.fill.secondaryHover, boxShadow: on ? "none" : `inset 0 0 0 1px ${t.border.strong}` }}>
+      {on ? (
+        <Paint style={{ position: "absolute", inset: 0 }} draw={(ctx: CanvasRenderingContext2D, w: number, h: number) => {
+          ctx.fillStyle = A; ctx.fillRect(0, 0, w, h);
+          ctx.fillStyle = inkFor(A); ctx.beginPath(); ctx.arc(w - 13, h / 2, 10, 0, Math.PI * 2); ctx.fill();
+        }} />
+      ) : (
+        <span style={{ position: "absolute", top: 3, left: 3, width: 20, height: 20, borderRadius: t.radius.full, background: t.text.secondary }} />
+      )}
     </span>
   );
   const rowBtn = (key: string, title: string, sub: string, right: ReactNode, onClick: () => void): ReactNode => (
@@ -680,7 +691,7 @@ export default function App() {
   );
   const inputS: CSSProperties = {
     width: "100%", boxSizing: "border-box", padding: "12px 18px", borderRadius: t.radius.full,
-    border: `1px solid ${t.border.default}`, background: t.bg.subtle, color: t.text.primary, fontFamily: font, fontSize: 15, outline: "none",
+    border: `1px solid ${t.border.default}`, background: t.bg.subtle, color: t.text.primary, fontFamily: font, fontSize: 15, outlineColor: t.border.focus,
   };
   const header = (h: string, sub: string): ReactNode => (
     <div style={{ display: "flex", flexDirection: "column", gap: 2, padding: "16px 16px 12px", borderBottom: line }}>
@@ -787,7 +798,7 @@ export default function App() {
           {playing ? "❚❚" : "▶"}
         </button>
         <span style={{ fontSize: 15, fontWeight: 700, color: t.text.primary, fontVariantNumeric: "tabular-nums" }}>{tc(time)}</span>
-        <span style={{ fontSize: 15, color: t.text.tertiary, fontVariantNumeric: "tabular-nums" }}>/ 0:{pad2(len)}</span>
+        <span style={{ fontSize: 15, color: muted, fontVariantNumeric: "tabular-nums" }}>/ 0:{pad2(len)}</span>
         <span style={{ ...label, marginLeft: "auto", fontWeight: 500 }}>{phone ? "Drag scenes to reorder" : "Drag scenes · tap a beat · Space, ← →"}</span>
       </div>
       <div style={{ height: 116, borderTop: line }}>
@@ -817,7 +828,7 @@ export default function App() {
           position: "relative", width: 44, height: 44, borderRadius: t.radius.full, overflow: "hidden", cursor: "pointer", padding: 0,
           border: `2px solid ${acc === i ? t.text.primary : t.bg.base}`, background: t.bg.base,
         }}>
-          <span style={{ position: "absolute", inset: 3, borderRadius: t.radius.full, overflow: "hidden" }}><Fill color={ACCENTS[i][1]} /></span>
+          <span style={{ position: "absolute", inset: 3, borderRadius: t.radius.full, overflow: "hidden" }}><Fill color={ACCENTS[i][1]} /><span style={{ position: "absolute", inset: 0, borderRadius: t.radius.full, boxShadow: `inset 0 0 0 1px ${t.border.strong}` }} /></span>
         </button>
       ))}
     </div>
@@ -925,7 +936,7 @@ export default function App() {
   return (
     <div ref={rootRef} style={{ fontFamily: font, fontSize: 15, color: t.text.primary, background: t.bg.base, minHeight: "100%", paddingBottom: phone ? 72 : 0 }}>
       <div style={{ position: "sticky", top: 0, zIndex: 5, display: "flex", flexWrap: "wrap", alignItems: "center", gap: 10, padding: "8px 16px", borderBottom: line, background: t.bg.base }}>
-        <Mascot ring={t.bg.base} size={36} />
+        <Mascot dot={t.text.primary} ring={t.bg.base} edge={t.border.strong} size={36} />
         <span style={{ fontSize: 20, fontWeight: 700, letterSpacing: "-0.02em", color: t.text.primary }}>.promo</span>
         <span style={{ flex: 1 }} />
         {accentBtn("Make my .promo", make)}
@@ -965,10 +976,10 @@ export default function App() {
 
       <div style={{ padding: phone ? "24px 12px" : "32px 20px", borderTop: line }}>
         <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 12, padding: 16, border: line, borderRadius: t.radius.xl, maxWidth: 720, margin: "0 auto" }}>
-          <MailBall dot={t.text.primary} ring={t.bg.base} size={40} />
+          <MailBall dot={t.text.primary} ring={t.bg.base} edge={t.border.strong} size={40} />
           <div style={{ flex: "1 1 200px", minWidth: 0, display: "flex", flexDirection: "column", gap: 2 }}>
             <span style={{ fontSize: 13, color: muted }}>More from the maker</span>
-            <span style={{ fontSize: 20, fontWeight: 700, letterSpacing: "-0.02em" }}>.mail</span>
+            <span style={{ fontSize: 20, fontWeight: 700, letterSpacing: "-0.02em", color: t.text.primary }}>.mail</span>
             <span style={{ fontSize: 13, color: muted }}>Your bot's own inbox: digests, sorting, reply drafts you approve</span>
           </div>
           <a href={MAIL_URL} target="_blank" rel="noopener noreferrer" style={{

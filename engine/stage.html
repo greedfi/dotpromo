@@ -113,6 +113,20 @@ function setText(title,sub,fs,subfs,w){
 }
 // ---------- devices ----------
 const PW=422,PH=876, LW=1300, LIDW=1200, LIDH=760, DECK=34;
+// ---------- safe area: 4% margin that holds at the camera's maximum push-in and drift ----------
+const CAM_OX=(land?.28:.5)*W, CAM_OY=.52*H, CAM_SMAX=1.08+.018, CAM_DX=W*.012, CAM_DY=H*.009, MX=W*.04, MY=H*.04;
+// content-space rect that stays inside the frame margin for every camera state
+const SAFE={l:CAM_OX-(CAM_OX-MX-CAM_DX)/CAM_SMAX, r:CAM_OX+(W-MX-CAM_DX-CAM_OX)/CAM_SMAX, t:CAM_OY-(CAM_OY-MY-CAM_DY)/CAM_SMAX, b:CAM_OY+(H-MY-CAM_DY-CAM_OY)/CAM_SMAX};
+if(land)SAFE.r-=20; // room for the per-beat lateral push (it peaks when the beat push-in is still 0)
+if(LY.ly<SAFE.t+4){const d=SAFE.t+4-LY.ly;LY.ly+=d;LY.tcy+=d} // brand corner stays inside the margin at full push
+const DEVBOX=(kind,o)=>{const w=kind==='ph'?PW:LW,h=kind==='ph'?PH:LIDH+DECK,of=kind==='ph'?.5:.6;const top=o.cy-h/2+of*h*(1-o.s);return {l:o.cx-w*o.s/2,r:o.cx+w*o.s/2,t:top-8,b:top+h*o.s+8}};
+function fitGroup(parts){ // parts: [[kind,obj]]; scales/shifts the group so it sits inside SAFE (and right of the text column on landscape)
+ const L0=land?Math.max(SAFE.l,LY.tx+LY.tw+24):SAFE.l, bx=()=>{const bs=parts.map(([k,o])=>DEVBOX(k,o));return {l:Math.min(...bs.map(b=>b.l)),r:Math.max(...bs.map(b=>b.r)),t:Math.min(...bs.map(b=>b.t)),b:Math.max(...bs.map(b=>b.b))}};
+ for(let it=0;it<6;it++){const b=bx();const f=Math.min(1,(SAFE.r-L0)/(b.r-b.l),(SAFE.b-SAFE.t)/(b.b-b.t));
+  if(f<.999){const cx=(b.l+b.r)/2,cy=(b.t+b.b)/2;parts.forEach(([k,o])=>{o.cx=cx+(o.cx-cx)*f;o.cy=cy+(o.cy-cy)*f;o.s*=f})}
+  const b2=bx();let dx=0,dy=0;if(b2.r>SAFE.r)dx=SAFE.r-b2.r;if(b2.l+dx<L0)dx=L0-b2.l;if(b2.b>SAFE.b)dy=SAFE.b-b2.b;if(b2.t+dy<SAFE.t)dy=SAFE.t-b2.t;
+  parts.forEach(([k,o])=>{o.cx+=dx;o.cy+=dy});if(f>=.999&&!dx&&!dy)break}}
+fitGroup([['ph',LY.phone]]);fitGroup([['lp',LY.laptop]]);fitGroup([['lp',LY.both.laptop],['ph',LY.both.phone]]);
 function phoneEl(){
  const d=mk(`width:${PW}px;height:${PH}px;transform-origin:50% 50%`);
  d.innerHTML=`<div style="position:absolute;inset:0;border-radius:68px;background:linear-gradient(145deg,#4a4e55,#16181b 38%,#2c2f35 70%,#5a5e66);padding:4px;box-shadow:inset 0 0 0 1px rgba(255,255,255,.15)"><div style="width:100%;height:100%;border-radius:64px;background:#050505;padding:12px"></div></div>`;
@@ -131,15 +145,16 @@ const PH_=phoneEl(), LP_=laptopEl();PH_.d.dataset.qa='fg';LP_.d.dataset.qa='fg';
 const shPh=mk(`width:${PW*1.25}px;height:120px;border-radius:50%;background:radial-gradient(ellipse,${T.shadow}.30),transparent 70%);filter:blur(16px)`);
 const shLp=mk(`width:${LW*1.05}px;height:120px;border-radius:50%;background:radial-gradient(ellipse,${T.shadow}.26),transparent 70%);filter:blur(18px)`);
 // one layer per moment per device; video media swaps frames, stills use object-position focus
-const media=(dev,m,key,focus)=>{const md=m['_'+key];const L=mk('', '', 'lay',dev.s);L.style.visibility='hidden';
+const media=(dev,m,key,focus,zoom)=>{const md=m['_'+key];const L=mk('', '', 'lay',dev.s);L.style.visibility='hidden';
  const im=new Image();im.className='m';L.appendChild(im);const f=focus||[50,0];im.style.objectPosition=`${f[0]}% ${f[1]}%`;
+ const z=zoom||1;if(z>1){im.style.width=im.style.height=(z*100)+'%';im.style.left=(-(z-1)*f[0])+'%';im.style.top=(-(z-1)*f[1])+'%'}
  if(md&&md.kind==='image')im.src=md.src;else if(!md){im.style.display='none';L.style.background=`linear-gradient(160deg,${hexA(A,.18)},${T.card})`}
  const RS=dev===PH_?78:60;const ring=mk(`width:${RS}px;height:${RS}px;margin:${-RS/2}px 0 0 ${-RS/2}px;background:rgba(70,76,90,.38);border:4px solid rgba(255,255,255,.92);box-shadow:0 0 0 1.5px rgba(40,45,60,.25),0 6px 18px rgba(0,0,0,.25);display:none`,'', 'ring',L);
  const rip=mk(`width:${RS}px;height:${RS}px;margin:${-RS/2}px 0 0 ${-RS/2}px;border:4px solid rgba(70,76,90,.6);display:none`,'', 'ring',L);
  return {L,im,md,ring,rip,key:md?(md.kind==='image'?md.src:md.dir):'none'}};
 const DEV=MS.map((m,i)=>{const d=m.device;
- return {ph:(d==='phone'||d==='both')?media(PH_,m,d==='both'&&m.phone_media?'phone_media':(d==='phone'?'media':'phone_media'),d==='phone'?(m.focus||m.phone_focus):m.phone_focus):null,
-  lp:(d==='laptop'||d==='both')?media(LP_,m,'media',m.focus):null}});
+ return {ph:(d==='phone'||d==='both')?media(PH_,m,d==='both'&&m.phone_media?'phone_media':(d==='phone'?'media':'phone_media'),d==='phone'?(m.focus||m.phone_focus):m.phone_focus,d==='phone'?(m.zoom||m.phone_zoom):m.phone_zoom):null,
+  lp:(d==='laptop'||d==='both')?media(LP_,m,'media',m.focus,m.zoom):null}});
 // a phone never mirrors laptop (desktop) media: promo.py rejects specs without mobile media for phones
 // ---------- chips ----------
 const CH=MS.map((m,i)=>(m.chips||[]).map((c,j)=>{const e=mk(`font-size:${(land?30:26)*P.scale}px;padding:.55em 1.05em;background:${T.chipBg};color:${T.ink};box-shadow:0 14px 34px ${T.shadow}.16),0 2px 6px ${T.shadow}.08),0 0 0 2px ${hexA(A,.35)}`,`<i style="background:${[A,...BR,'#ff8fc7','#5fe0b5','#ffc93c'][j%5]}"></i>${esc(c)}`,'chip');e.style.display='none';Z(e,45);return e}));
@@ -155,12 +170,12 @@ const SPH=P.blobs===false?[]:Array.from({length:hasA('logo_buddies')?Math.min(5,
  const x=land?lerp(W*.5,W*.97,rnd(i,2)):lerp(W*.05,W*.95,rnd(i,2)), y=land?lerp(H*.06,H*.94,rnd(i,3)):lerp(H*(sq?.3:.32),H*.95,rnd(i,3));
  return {e,dep,size,x,y,ph:rnd(i,4)*6.28}});
 // logo_buddies: little characters made from the owner's logo; pop in, hop on downbeats, blink and glance
-const BUD=!hasA('logo_buddies')?[]:[[.62,.14,64,.2],[.97,.3,52,.8],[.58,.86,58,.5],[.93,.8,72,.95],[.74,.06,44,.1],[.52,.5,40,.3]].map(([fx,fy,sz,dep],i)=>{
+const BUD=!hasA('logo_buddies')?[]:(land?[[.44,.15,60,.2],[.86,.16,52,.6],[.565,.08,44,.1],[.88,.86,46,.55],[.5,.16,40,.3]]:H>W*1.3?[[.1,.34,56,.2],[.9,.355,48,.6],[.1,.09,44,.95],[.9,.1,52,.1]]:[[.1,.18,56,.2],[.9,.2,48,.6],[.9,.06,40,.95]]).map(([fx,fy,sz,dep],i)=>{
  const e=mk(`width:${sz}px;height:${sz}px;filter:${dep>.85?'blur(3px)':dep<.2?'blur(1.5px)':'none'}`);Z(e,dep>.6?56:9);let ey=null;
  if(S.logo_parts){e.innerHTML=`<img src="${S.logo_parts.base}" style="position:absolute;inset:0;width:100%;height:100%"><img src="${S.logo_parts.eyes}" style="position:absolute;inset:0;width:100%;height:100%">`;ey=e.lastChild}
  else if(S.logo)e.innerHTML=`<img src="${S.logo}" style="position:absolute;inset:0;width:100%;height:100%;object-fit:contain">`;
  else e.innerHTML=`<div style="position:absolute;inset:0;border-radius:50%;background:radial-gradient(circle at 32% 28%,#fff 0,${A} 40%)"></div>`;
- const x=land?W*fx:W*(.1+.8*((fx-.5)*2)),y=land?H*fy:lerp(H*.32,H*.95,fy);return {e,ey,sz,dep,x,y,ph:i*1.3}});
+ let x=W*fx,y=H*fy;const par=W*.012*Math.abs(dep-.45)*5, pad=sz*.62+16+par+14;x=cl(x,SAFE.l+pad,SAFE.r-pad);y=cl(y,SAFE.t+sz*.62+16+sz*.7+8,SAFE.b-sz*.62-16-8);return {e,ey,sz,dep,x,y,ph:i*1.3}});
 // copy_burst: copies of one product screen fan out from a single example
 const CBk=anAt('copy_burst',()=>{const i=MSd.findIndex((d,i)=>i>0&&(d==='laptop'||d==='both'));return i>=0?i:MSd.findIndex(d=>d!=='none')});
 const cbSrc=k=>{const m=MS[k];if(!m)return null;const md=m._media||m._phone_media;return md?(md.kind==='image'?md.src:md.dir+'/0001.jpg'):null};
@@ -238,7 +253,7 @@ function devState(which,t){ // returns {x,y,s,ry,rx,z,vis}
  if(ptg&&ptg!==tg){const dl=(which==='ph'&&MS[k].device==='both')?.22:0;const q=eo5((lt-dl)/TR),o=rest(tg),a=rest(ptg);const kick=Math.sin(cl((lt-dl)/TR)*Math.PI)*(which==='ph'?-12:0);
   return Object.assign(o,{x:lerp(a.x,o.x,q),y:lerp(a.y,o.y,q),s:lerp(a.s,o.s,q),ry:o.ry+kick})}
  // same position, new beat: a small lateral push + spring tilt keeps the shot moving
- const o=rest(tg);if(k>0){const q=spr(lt,12);o.x+=(1-q)*(land?60:30)*(k%2?1:-1);if(which==='ph')o.ry+=(1-q)*(k%2?-14:14);else o.s*=1-.03*(1-q)}
+ const o=rest(tg);if(k>0){const q=spr(lt,12);o.x+=(1-q)*(land?(k%2?40:-18):(k%2?30:-30)); /* landscape: never pushes into the text column */if(which==='ph')o.ry+=(1-q)*(k%2?-14:14);else o.s*=1-.03*(1-q)}
  return o}
 function place(dev,sh,st_,base){
  if(!st_.vis){dev.d.style.display='none';sh.style.display='none';return}
@@ -260,11 +275,12 @@ function wordmark(t,form,collapse,srcX){ // srcX: logo centre in WM-local px
   let p,b,sc;
   if(collapse!=null&&t>=collapse){const q=ei(r(t,collapse+i*.025,collapse+.32+i*.025));p=1-q;sc=1-q;b=q>0&&q<1?.5:0;busy=busy||q<1}
   else{const x=t-form-i*.075;p=spr(x,9);sc=spr(x-.06,11);b=x>0?Math.max(0,1-spr(x,10))*1.25:0;busy=busy||x<.9;if(x<0){p=0;sc=0}}
-  l.s.style.transform=`translate(${dx*(1-p)}px,${dy+Math.sin(cl(p)*Math.PI)*-c.w*.35}px) scale(${Math.max(0,sc)})`;
+  const ox=p>1?Math.sign(dx*(1-p))*Math.min(Math.abs(dx*(1-p)),c.w*.25):dx*(1-p); // overshoot capped so long wordmarks stay in frame
+  l.s.style.transform=`translate(${ox}px,${dy+Math.sin(cl(p)*Math.PI)*-c.w*.35}px) scale(${Math.max(0,sc)})`;
   l.s.style.opacity=sc>0.02?1:0;
   // liquid blob that shoots out ahead of each letter and melts into it
   const bp=spr(t-form-i*.075+.06,12);const bs=c.w*.55*Math.max(0,b);
-  l.b.style.cssText=`width:${bs}px;height:${bs}px;left:${lerp(srcX,c.x,bp)-bs/2}px;top:${c.y-bs/2}px;background:${T.ink};display:${bs>1?'block':'none'}`});
+  l.b.style.cssText=`width:${bs}px;height:${bs}px;left:${lerp(srcX,c.x,Math.min(bp,1+c.w*.25/Math.max(1,Math.abs(dx))))-bs/2}px;top:${c.y-bs/2}px;background:${T.ink};display:${bs>1?'block':'none'}`});
  WM.style.filter=busy?'url(#goo)':'none';
 }
 // ---------- render ----------
@@ -288,9 +304,11 @@ const firstOn={};
 function micro(lay,m,t,t0,t1,kk,key){
  if(firstOn[key]==null)firstOn[key]=kk;
  const lt=t-t0,dur=t1-t0;let tr='';
- if(lay.md&&lay.md.kind==='image'){const q=eio(cl(lt/dur));tr=`scale(${1.04+.05*q}) translateY(${(-2.5*q).toFixed(3)}%)`}
+ // slow drift; anchored at the focus row so a top-aligned crop never cuts the top UI mid-element
+ const fy=((key==='lp'||m.device==='phone')?(m.focus||m.phone_focus||[50,0]):(m.phone_focus||[50,0]))[1];
+ if(lay.md&&lay.md.kind==='image'){const q=eio(cl(lt/dur));const zz=(key==='lp'||m.device==='phone')?(m.zoom||(m.device==='phone'?m.phone_zoom:0)||1):(m.phone_zoom||1);tr=zz>1?`scale(${1+.025*q})`:`scale(${1+.04*q}) translateY(${(-2*q*cl((fy-20)/30)).toFixed(3)}%)`}
  const list=(m.taps&&m.taps.length?m.taps:defTaps(m)).map(x=>Math.round(x[0]/BEAT)*BEAT);let bump=0;list.forEach(tt=>{const d=lt-tt;if(d>-.05&&d<.25)bump=Math.max(bump,Math.sin(r(d,-.05,.25)*Math.PI))});
- lay.im.style.transform=tr;lay.im.style.transformOrigin='50% 30%';
+ lay.im.style.transform=tr;lay.im.style.transformOrigin=lay.im.style.width?`50% ${fy}%`:`50% ${fy<30?0:30}%`;
  lay.L.style.scale=1-.012*bump;
  lay.L.style.clipPath='none';
  if(firstOn[key]===kk&&key==='ph'){const q=eo5(r(lt,.2,1.0));lay.im.style.transform=`scale(${lerp(1.35,1,q)}) `+tr}}
@@ -308,21 +326,74 @@ function screens(which,t){
   if(push){prev.L.style.visibility='visible';prev.L.style.transform=`translateX(${-q*35}%)`;prev.L.style.zIndex=1;frame(MS[pi],prev,t,PL.moments[pi][0]);prev.ring.style.display='none';prev.rip.style.display='none'}}
  else if(prev&&k<MS.length){prev.L.style.visibility='visible';prev.L.style.transform='none';frame(MS[pi],prev,t,PL.moments[pi][0])}
  else if(k>=MS.length){let lj=-1;for(let j=MS.length-1;j>=0;j--)if(DEV[j][key]){lj=j;break}if(lj>=0){const v=DEV[lj][key];v.L.style.visibility='visible';v.L.style.transform='none';frame(MS[lj],v,t,PL.moments[lj][0])}}}
-window.render=t=>{pending=[];
+// chip layout from the moment's settled device boxes (content space)
+let CHBOX=[];const CHL={};
+function chipLayout(k,m){if(CHL[k])return CHL[k];const es_=CH[k];es_.forEach(e=>{e.style.display='inline-flex';e.style.transform='none'});const r_=chipLayout0(k,m);es_.forEach(e=>e.style.display='none');return CHL[k]=r_}
+function chipLayout0(k,m){const tg=target(m.device);const es=CH[k];const out=[];
+ const ph=tg.ph?DEVBOX('ph',tg.ph):null, lp=tg.lp?DEVBOX('lp',tg.lp):null;const gap=16;
+ if(!es.length)return CHL[k]=out;
+ if(!land&&(ph||lp)){ // portrait / square: centred rows just above the device group
+  const top=Math.min(ph?ph.t:1e9,lp?lp.t:1e9);let fs=parseFloat(es[0].style.fontSize);
+  const pack=()=>{const rows=[[]];let w=0;const maxW=SAFE.r-SAFE.l;es.forEach(e=>{if(w&&w+e.offsetWidth>maxW){rows.push([]);w=0}rows[rows.length-1].push(e);w+=e.offsetWidth+gap});return rows};
+  let rows=pack();const h=es[0].offsetHeight+10;
+  const pos=new Map();let y=top-14-rows.length*h;
+  rows.forEach(rw=>{const tw=rw.reduce((a,e)=>a+e.offsetWidth+gap,-gap);let x=W/2-tw/2;rw.forEach(e=>{pos.set(e,[x,y]);x+=e.offsetWidth+gap});y+=h});
+  return es.map(e=>pos.get(e))}
+ if(m.device==='phone'||(!lp&&ph)){ // stacked to the left of the phone (right of it when there is no room)
+  const hh=ph.b-ph.t;let fs=parseFloat(es[0].style.fontSize);
+  const wmax=()=>Math.max(...es.map(e=>e.offsetWidth));
+  const left0=land?LY.tx+LY.tw+8:SAFE.l;
+  while(fs>18&&ph.l-24-wmax()<left0&&ph.r+24+wmax()>SAFE.r){fs-=1;es.forEach(e=>e.style.fontSize=fs+'px')}
+  const toLeft=ph.l-24-wmax()>=left0;
+  es.forEach((e,j)=>{const x=toLeft?ph.l-24-e.offsetWidth:ph.r+24;out.push([x,ph.t+hh*(.2+.16*j)])});return out}
+ if(lp){ // rows under the laptop, clear of the phone
+  let x0=lp.l+8, xr=ph&&m.device==='both'?ph.l-gap:lp.r-(BUD.length?120:0), y0=lp.b+10; const yMax=SAFE.b;
+  let fs=parseFloat(es[0].style.fontSize);
+  const pack=()=>{const pos=[];let x=x0,y=y0;es.forEach(e=>{if(x>x0&&x+e.offsetWidth>xr){x=x0;y+=e.offsetHeight+12}pos.push([x,y]);x+=e.offsetWidth+gap});return pos};
+  let pos=pack();const bottom=()=>Math.max(...pos.map((p,j)=>p[1]+es[j].offsetHeight));
+  while(fs>18&&(bottom()>yMax||Math.max(...pos.map((p,j)=>p[0]+es[j].offsetWidth))>xr)){fs-=1;es.forEach(e=>e.style.fontSize=fs+'px');pos=pack()}
+  return pos}
+ // no device: a centred row under the headline
+ let x=W/2-es.reduce((a,e)=>a+e.offsetWidth+gap,0)/2;es.forEach(e=>{out.push([x,H*.72]);x+=e.offsetWidth+gap});return out}
+// ---------- captions (burned in; the owner's lines verbatim) ----------
+const CAPS=S.captions||{};const CAPON=CAPS.on!==false&&MS.some(m=>m.caption);const CST=CAPS.style||'bold';
+const CAP=mk(`text-wrap:balance;text-align:${land?'left':'center'};z-index:90;font-weight:${CST==='clean'?620:800};letter-spacing:-.015em;line-height:${CST==='clean'?1.2:1.5}`,null,'a');Z(CAP,90);CAP.style.display='none';
+st.appendChild(CAP); // screen-fixed: subtitles do not ride the camera
+const capBox={x:land?LY.tx:W*.08,w:land?LY.tw:W*.84,b:H-MY-12};
+function capSet(k,m){if(CAP._k===k)return;CAP._k=k;const fs0=(land?42:sq?36:46)*(CST==='clean'?.92:1);
+ const words=String(m.caption||'').split(/\s+/).filter(Boolean);
+ CAP.innerHTML=`<span class="cb">${words.map(w=>`<span class="cw" style="display:inline-block;white-space:pre">${esc(w)} </span>`).join('')}</span>`;
+ const cb=CAP.firstChild;
+ if(CST==='bold'){cb.style.cssText=`display:inline;background:${DARK?'#ffffff':'rgba(15,20,25,.9)'};color:${DARK?'#0f1419':'#ffffff'};padding:.18em .5em;border-radius:.32em;box-decoration-break:clone;-webkit-box-decoration-break:clone`}
+ else if(CST==='pop'){cb.style.cssText=`display:inline;background:${T.chipBg};color:${T.ink};padding:.18em .5em;border-radius:.32em;box-decoration-break:clone;-webkit-box-decoration-break:clone;box-shadow:0 10px 30px ${T.shadow}.16),0 0 0 2px ${hexA(A,.35)}`}
+ else {cb.style.cssText=`color:${T.ink};text-shadow:0 1px 0 ${DARK?'rgba(0,0,0,.5)':'rgba(255,255,255,.9)'},0 0 18px ${DARK?'rgba(0,0,0,.45)':'rgba(255,255,255,.85)'}`}
+ CAP.style.width=capBox.w+'px';let fs=fs0;CAP.style.fontSize=fs+'px';CAP.style.display='block';
+ while(fs>20&&CAP.offsetHeight>fs*1.5*2.05+fs*.4){fs-=1;CAP.style.fontSize=fs+'px'}
+ CAP.style.transform=`translate(${capBox.x}px,${capBox.b-CAP.offsetHeight}px)`}
+function captions(k,t){CAP.style.display='none';if(!CAPON||k<0||k>=MS.length||!MS[k].caption)return;const m=MS[k];
+ const t0=PL.moments[k][0],t1=PL.moments[k][1],at=t0+BEAT;if(t<at-.001||t>t1-.12)return;capSet(k,m);CAP.style.display='block';
+ const outp=ei(r(t,t1-.3,t1-.12));const ws=[...CAP.querySelectorAll('.cw')];
+ if(CST==='pop'){ // words pop in on the half-beats, the current word in the accent colour
+  const per=Math.max(.06,Math.min(BEAT/2,(t1-at-.6)/Math.max(1,ws.length)));
+  ws.forEach((w,i)=>{const a=t-(at+i*per);const p=spr(a,16,.42);w.style.transform=`scale(${a<0?0:Math.max(0,p)})`;w.style.opacity=a<0?0:1;w.style.color=a>=0&&a<per&&i<ws.length-1?A:''});
+  CAP.style.opacity=1-outp}
+ else{const p=spr(t-at,13,CST==='bold'?.42:.7);ws.forEach(w=>{w.style.transform='none';w.style.opacity=1;w.style.color=''});
+  CAP.style.opacity=cl((t-at)/.12)*(1-outp);CAP.firstChild.style.display='inline';CAP.style.translate=`0 ${(1-cl(p))*(CST==='bold'?22:12)}px`}}
+window.render=t=>{pending=[];window._t=t;
  const tf=Math.min(t,HIT+.7); // everything settles: the final lockup is static
  // camera: continuous gentle push-in + drift (settles with the lockup)
  const kk_=kAt(t),mt0=kk_>=0&&kk_<MS.length?PL.moments[kk_][0]:0,beatPush=kk_>=0&&kk_<MS.length?.018*eo(r(t,mt0,PL.moments[kk_][1])):0;
  const camS=1+.08*eio(tf/(HIT+.7))+beatPush*(t<OUT?1:0), camX=Math.sin(tf*.23)*W*.012, camY=Math.cos(tf*.19)*H*.009;
- let fly='';
+ let fly='';window._fly=1;
  if(FTk>=0&&FTk+1<MS.length){const B=PL.moments[FTk][1];
   if(t>=B-.42&&t<B+.5){const into=t<B;const kd=into?FTk:FTk+1;const dv=MS[kd].device==='phone'?'ph':'lp';const st_=devState(dv==='ph'&&MS[kd].device==='both'?'lp':dv,into?B-.43:B+.55);
    const px=st_.vis?st_.x:W/2,py=st_.vis?st_.y-(dv==='lp'?40*st_.s:0):H/2;const z=into?1+7*ei(r(t,B-.42,B)):1+7*(1-eo5(r(t,B,B+.5)));
-   fly=` translate(${px}px,${py}px) scale(${z}) translate(${-px}px,${-py}px)`;CAM.style.filter=z>1.5?`blur(${Math.min(10,(z-1.5)*2).toFixed(1)}px)`:'none'}else CAM.style.filter='none'}
+   window._fly=z;fly=` translate(${px}px,${py}px) scale(${z}) translate(${-px}px,${-py}px)`;CAM.style.filter=z>1.5?`blur(${Math.min(10,(z-1.5)*2).toFixed(1)}px)`:'none'}else CAM.style.filter='none'}
  CAM.style.transform=`translate(${camX}px,${camY}px) scale(${camS})`+fly;
  // background drift
  G.forEach((g,i)=>{const s=Math.max(W,H)*.62;const cx=[.22,.78,.55,.4][i]*W-camX*1.6+Math.sin(tf*.23+i*2.1)*W*.09, cy=[.25,.75,.15,.85][i]*H+Math.cos(tf*.19+i*1.3)*H*.1;g.style.transform=`translate(${cx-s/2}px,${cy-s/2}px)`});
  // ---- logo lockup ----
- const LS=WMgeo&&letters.length?Math.min(LY.hero.logo,W*.86/(1.02+WMgeo.w*.78/WMF)):LY.hero.logo, wmScale=LS*.78/WMF; const wmW=WMgeo?WMgeo.w*wmScale:0, gap=LS*.02;
+ const LS=WMgeo&&letters.length?Math.min(LY.hero.logo,W*(1-2*(MX+CAM_DX)/W)/CAM_SMAX*.98/(1.02+WMgeo.w*.78/WMF)):LY.hero.logo, wmScale=LS*.78/WMF; const wmW=WMgeo?WMgeo.w*wmScale:0, gap=LS*.02;
  const heroW=LS+(letters.length?gap+wmW:0), hx=W/2-heroW/2, hy=LY.hero.cy;
  const cs=LY.lh/LS; const cW=heroW*cs; const cx0=LY.align==='center'?W/2-cW/2:LY.lx, cy0=LY.ly+LY.lh/2;
  let lx,ly,ls,lrot=0,blurPx=0,formAt=.42,collapseAt=null,squash=1;
@@ -332,9 +403,10 @@ window.render=t=>{pending=[];
   else{const pop=spr(t-.05,9,.38);ls*=Math.max(0,pop);blurPx=(1-cl(t/.35))*18;lrot=(1-spr(t-.05,9,.5))*-25;
   squash=1+Math.sin(r(t,.55,1.0)*Math.PI)*.06;}}
  else{ // outro: wordmark melts back, logo returns to centre and scales up, blinks and glances, wordmark re-forms
-  collapseAt=OUT; const ret=eio(r(t,OUT+.1,OUT+.75)), up=spr(t-OUT-.15,9,.4);
-  const soloX=W/2-LS/2, lockX=hx; const rf=OUT+1.95; const slide=eo5(r(t,rf-.1,rf+.55));
-  lx=lerp(lerp(cx0,soloX,ret),lockX,slide);ly=lerp(cy0,hy,ret);ls=lerp(cs+(1.45-cs)*Math.max(0,up),1,slide);
+  collapseAt=OUT; const ret=eio(r(t,OUT+.05,OUT+.6)), up=spr(t-OUT-.22,9,.4);
+  const rf=OUT+1.95; const slide=eo5(r(t,rf-.1,rf+.55));
+  const ccx=lerp(lerp(cx0+LS*cs/2,W/2,ret),hx+LS/2,slide); // logo centre: corner -> middle -> lockup slot
+  ly=lerp(cy0,hy,ret);ls=lerp(cs+(1.45-cs)*Math.max(0,up),1,slide);ls=Math.min(ls,Math.max(cs,Math.min(ly-SAFE.t,SAFE.b-ly)*2*.9/LS));lx=ccx-LS*ls/2; // never grows past the safe margin while it travels
   formAt=rf;
   lrot=Math.sin(r(t,OUT+.1,OUT+.75)*Math.PI)*-10;}
  const lsz=LS*ls;
@@ -346,11 +418,13 @@ window.render=t=>{pending=[];
  if(GROUND){GROUND.style.display=t<IN?'block':'none';GROUND.style.transform=`translate(${-W*.1}px,${hy+LS/2+(eio(r(t,IN-.55,IN-.05)))*H*.6}px)`}
  LOGO.firstChild&&(LOGO.style.filter=blurPx>.3?`blur(${blurPx}px)`:'none');
  LOGO.style.rotate=lrot+'deg';LOGO.style.scale=`${1/squash} ${squash}`;
+if(t>=OUT&&!BB){const b=LOGO.getBoundingClientRect(),cx=(b.left+b.right)/2,cy=(b.top+b.bottom)/2,m=4; // outro: the returning logo never crosses the 4% margin
+ const f=Math.min(1,(cy-MY-m)/Math.max(1,cy-b.top),(H-MY-m-cy)/Math.max(1,b.bottom-cy),(cx-MX-m)/Math.max(1,cx-b.left),(W-MX-m-cx)/Math.max(1,b.right-cx));
+ if(f<1){lx+=LS*ls*(1-f)/2;ls*=f;LOGO.style.transform=`translate(${lx}px,${ly-LS/2}px) scale(${ls})`}}
  // eyes: blink + glance (needs logo_parts) — otherwise a squash-blink of the whole mark
  const bl=Math.min(BIN?Math.min(blinkAt(t,5*BEAT+.02),blinkAt(t,5*BEAT+1.35)):blinkAt(t,1.55),blinkAt(t,OUT+.82),blinkAt(t,OUT+1.1),blinkAt(t,HIT+.5));
  const gx=(BIN&&t<IN?LS*.07*(eo5(r(t,5*BEAT+.3,5*BEAT+.45))-eo5(r(t,5*BEAT+1.05,5*BEAT+1.2))):0)+LS*.075*(-eo5(r(t,OUT+1.25,OUT+1.42))+2*eo5(r(t,OUT+1.55,OUT+1.72))-eo5(r(t,OUT+1.8,OUT+1.95)));
  if(eyes){const ec=BB?BB.eyeClose:0;eyes.style.transformOrigin=eyeO;eyes.style.transform=`translate(${gx}px,${BB?BB.eyeDy:0}px) scaleY(${bl*(1-ec)})`;if(HAPPY){HAPPY.style.display=ec>.5?'block':'none';HAPPY.style.transform=`translateY(${BB?BB.eyeDy:0}px)`}}
- else if(bl<1)LOGO.style.scale=`${1+(1-bl)*.05} ${1-(1-bl)*.08}`;
  // wordmark follows the logo
  if(letters.length){const wx=lx+(LS+gap)*ls, wy=ly;WM.style.transform=`translate(${wx}px,${wy-WMgeo.h/2}px) scale(${wmScale*ls})`;
   const srcX=(WMgeo&&WMgeo.L[0]?WMgeo.L[0].x:0); /* blobs emerge right of the sphere, never over it */ wordmark(t,formAt,collapseAt&&t<formAt?collapseAt:null,srcX);
@@ -382,21 +456,25 @@ window.render=t=>{pending=[];
  screens('ph',t);screens('lp',t);
  // ---- chips (breakout UI) ----
  CH.forEach(a=>a.forEach(e=>e.style.display='none'));
- if(k>=0&&k<MS.length){const m=MS[k],t0=PL.moments[k][0],t1=PL.moments[k][1];const tg=target(m.device);const main=m.device==='phone'?ps:ls_.vis?ls_:ps;const dv=m.device==='phone'?PH_:LP_;
+ CHBOX=[];
+ if(k>=0&&k<MS.length){const m=MS[k],t0=PL.moments[k][0],t1=PL.moments[k][1];
+  // chips sit BESIDE the screens, never over them: left of a lone phone, in rows under the laptop (left of the phone in 'both')
+  const lay=chipLayout(k,m);
   CH[k].forEach((e,j)=>{const a=t-(t0+(3+j)*BEAT), out=ei(r(t,t1-.22,t1-.02));const p=spr(a,13,.42);if(a<0)return;e.style.display='inline-flex';
-   let x,y;const left=main.x-dv.w*main.s/2, top=main.y-dv.h*main.s/2, ww=dv.w*main.s, hh=dv.h*main.s;
-   if(m.device==='phone'){x=left-e.offsetWidth+ (j%2?70:30);y=top+hh*(.22+.17*j)}
-   else{x=(land?left+ww*.04:left+ww*.05)+j*(e.offsetWidth*0)+ (j%2?ww*.42:0);y=top+hh*(.86)+ (j>1?e.offsetHeight*1.3:0)-e.offsetHeight/2;if(!land){x=lerp(W*.08,W*.5,(j%2))+(j>1?W*.08:0);y=top+hh*.95+(j>1?e.offsetHeight*1.3:0)}}
-   if(hasA('chip_rain')){const g=spr(a,7,.5);if(m.device==='phone'){y=top+hh*.92-(j+1)*e.offsetHeight*1.15}e.style.transform=`translate(${x}px,${y-(1-g)*H*.7}px) rotate(${(1-cl(g))*(j%2?14:-12)}deg) scale(${1-out})`}else
+   const [x,y]=lay[j];CHBOX.push({x,y,w:e.offsetWidth,h:e.offsetHeight});e._settled=a>.7&&out<.01;
+   if(hasA('chip_rain')){const g=Math.min(1.025,spr(a,7,.5));e.style.transform=`translate(${x}px,${y-(1-g)*H*.7}px) rotate(${(1-cl(g))*(j%2?14:-12)}deg) scale(${1-out})`}else
    e.style.transform=`translate(${x}px,${y}px) scale(${Math.max(0,p)*(1-out)}) rotate(${(1-cl(p))*-8}deg)`;e.style.transformOrigin='50% 50%'})}
+ captions(k,t);
  // ---- spheres ----
+ const ixG=(a,b)=>Math.max(0,Math.min(a.right,b.right)-Math.max(a.left,b.left))*Math.max(0,Math.min(a.bottom,b.bottom)-Math.max(a.top,b.top)), scrR=[PH_,LP_].filter(d=>d.d.style.display!=='none').map(d=>d.s.getBoundingClientRect()); // foreground orbs fade instead of covering a screen
  SPH.forEach((s,i)=>{const appear=spr(t-(BIN?5*BEAT+.5:.9)-i*.08,12,.4), gone=ei(r(t,OUT+.05+i*.03,OUT+.45+i*.03));
   const par=(ps.vis?(ps.x-LY.phone.cx):0)*(s.dep-.4)*.25+camX*(s.dep-.45)*5;
   const bob=Math.sin(tf*1.4+s.ph)*14*(.4+s.dep), drift=Math.cos(tf*.6+s.ph)*18;
   // gather into the logo on the outro
   const gx=lerp(s.x+drift+par,W/2,gone), gy=lerp(s.y+bob+camY*(s.dep-.45)*5,LY.hero.cy,gone);
   const sc=Math.max(0,appear)*(1-gone);s.e.style.display=sc<.01?'none':'block';
-  s.e.style.transform=`translate(${gx-s.size/2}px,${gy-s.size/2}px) scale(${sc})`});
+  s.e.style.transform=`translate(${gx-s.size/2}px,${gy-s.size/2}px) scale(${sc})`;
+  if(s.dep>.6&&sc>=.01){const b=s.e.getBoundingClientRect();let ov=0;scrR.forEach(rr=>{ov=Math.max(ov,ixG(b,rr)/Math.max(1,b.width*b.height))});s.e.style.opacity=(1-cl(ov*4)).toFixed(3)}else s.e.style.opacity=''});
  // word_swap: accent words flip on the beat (to the alternate after '|', else a flip of the same words)
  HL.querySelectorAll('.acc').forEach(a=>{a.style.transform='none';if(!hasA('word_swap')||k<0||k>=MS.length){a.textContent=a.dataset.a;return}
   const t0=PL.moments[k][0],at=t0+5*BEAT;const d=t-at;const alt=a.dataset.b||a.dataset.a;
@@ -412,7 +490,7 @@ window.render=t=>{pending=[];
  CB.forEach(e=>e.style.display='none');
  if(CBk>=0&&k===CBk&&CB.length){const t0=PL.moments[k][0],t1=PL.moments[k][1];const st_=devState(MS[k].device==='phone'?'ph':'lp',t);
   const go=t0+2*BEAT,back=t1-1.5*BEAT;if(t>=go-.02){CB.forEach((e,j)=>{const a=spr(t-go-j*.03,10,.42),c=ei(r(t,back,back+.3));const p=Math.max(0,a)*(1-c);
-   const ang=(land?(-200+j*(220/7)):(-180+j*(360/8)))*Math.PI/180,rad=(land?W*.27:W*.4)*(1+.16*(j%2));const bw0=W*.17;let tx=st_.x+Math.cos(ang)*rad,ty=st_.y+Math.sin(ang)*rad*.75;tx=cl(tx,(land?W*.47:bw0*.55)+bw0/2,W-bw0*.55);ty=cl(ty,bw0*.4,H-bw0*.4);
+   const ang=(land?(-200+j*(220/7)):(-180+j*(360/8)))*Math.PI/180,rad=(land?W*.27:W*.4)*(1+.16*(j%2));const bw0=W*.17;let tx=st_.x+Math.cos(ang)*rad,ty=st_.y+Math.sin(ang)*rad*.75;const hw=bw0*.58*1.15+14,hh2=bw0/1.6*.58*1.15+14;tx=cl(tx,Math.max(land?W*.47+bw0/2:0,SAFE.l+hw),SAFE.r-hw);ty=cl(ty,SAFE.t+hh2,SAFE.b-hh2);
    const bw=W*.17,bh=bw/1.6;e.style.display=p<.01?'none':'block';
    e.style.transform=`translate(${lerp(st_.x,tx,p)-bw/2}px,${lerp(st_.y,ty,p)-bh/2}px) rotate(${(j-3.5)*5*p}deg) scale(${.35+.8*p})`})}}
  return Promise.all(pending).then(()=>k)};
@@ -430,11 +508,24 @@ window.ready=async()=>{await document.fonts.ready;await Promise.all([...document
  return true};
 window.fitAll=()=>true;
 // ---------- QA: overflow / overlap / off-stage for the current frame ----------
-window.qa=()=>{const out=[];
+window.qa=(still)=>{const out=[];const t_=window._t||0;const k_=kAt(t_);const settled=k_>=0&&k_<MS.length&&t_-PL.moments[k_][0]>1.1&&t_<PL.moments[k_][1]-.3&&!(window._fly>1.02); // the fly-through dive is a deliberate camera move
  document.querySelectorAll('.lay').forEach(L=>{if(L.style.visibility!=='visible')return;const im=L.querySelector('img.m');if(!im||!im.naturalWidth||im.style.display==='none')return;const a=im.naturalWidth/im.naturalHeight,b=L.clientWidth/L.clientHeight;if(Math.abs(a/b-1)>.1)out.push(`media aspect ${a.toFixed(2)} does not fit screen ${b.toFixed(2)} (>10%): ${im.src.slice(-40)}`)});const R=e=>e.getBoundingClientRect(),ix=(a,b)=>Math.max(0,Math.min(a.right,b.right)-Math.max(a.left,b.left))*Math.max(0,Math.min(a.bottom,b.bottom)-Math.max(a.top,b.top));
- const tx=R(HL);if(TX.style.opacity!=='0'&&HL.textContent){if(tx.left<-1||tx.right>W+1||tx.top<-1||tx.bottom>H+1)out.push('headline off-stage');
+ const tx=R(HL);if(TX.style.opacity!=='0'&&HL.textContent&&!(window._fly>1.02)){if(tx.left<-1||tx.right>W+1||tx.top<-1||tx.bottom>H+1)out.push('headline off-stage');
   if(HL.querySelectorAll('.ln').length&&HL.offsetHeight>parseFloat(HL.style.fontSize)*1.02*2.3)out.push('headline over 2 lines');
   [PH_.d,LP_.d].forEach(d=>{if(d.style.display!=='none'&&ix(R(TX),R(d))>400)out.push('text overlaps device')});}
  document.querySelectorAll('img').forEach(i=>{if(i.closest('.lay')&&i.closest('.lay').style.visibility!=='visible')return;if(i.style.display==='none')return;if(i.src&&(!i.complete||!i.naturalWidth))out.push('image not loaded: '+i.src.slice(-40))});
+
+ // frame-edge clip (4% safe margin) for settled devices, chips, buddies, captions and the CTA/intro lockup
+ const inside=(b,name)=>{if(b.width<1||b.height<1)return;if(b.left<MX-1||b.top<MY-1||b.right>W-MX+1||b.bottom>H-MY+1)out.push(`${name} outside the 4% safe area (${Math.round(b.left)},${Math.round(b.top)},${Math.round(b.right)},${Math.round(b.bottom)})`)};
+ const vis=e=>e&&e.style.display!=='none'&&getComputedStyle(e).display!=='none';
+ if(settled){[[PH_,'phone'],[LP_,'laptop']].forEach(([d,n])=>{if(vis(d.d))inside(R(d.d),n)});
+  BUD.forEach((b,i)=>{if(vis(b.e))inside(R(b.e),'logo buddy '+(i+1))});
+  const scr=[PH_,LP_].filter(d=>vis(d.d)).map(d=>R(d.s));
+  CH.flat().forEach(e=>{if(!vis(e)||!e._settled)return;const c=R(e);inside(c,'chip "'+e.textContent+'"');scr.forEach(sb=>{if(ix(c,sb)>4)out.push('chip "'+e.textContent+'" overlaps a device screen')})});
+  BUD.forEach((b,i)=>{if(!vis(b.e))return;scr.forEach(sb=>{if(ix(R(b.e),sb)>R(b.e).width*R(b.e).height*.15)out.push('logo buddy '+(i+1)+' covers a device screen')})});
+  if(vis(CAP)){inside(R(CAP),'caption');if(land)scr.forEach(sb=>{if(ix(R(CAP),sb)>4)out.push('caption overlaps a device screen')})}}
+ if(settled&&t_<OUT)inside(R(LOGO),'brand corner logo');
+ if(t_>=HIT+.5){inside(R(LOGO),'outro logo');if(letters.length)inside(R(WM),'outro wordmark');inside(R(HL),'CTA')}
+ if(S._logo_status==='opaque')out.push('logo has an opaque background (could not key it out): use a transparent PNG or SVG');
  return out};
 </script></body></html>

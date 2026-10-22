@@ -24,6 +24,7 @@ DEFAULT_ANIMS = ['logo_buddies', 'word_swap', 'copy_burst']
 CUSTOM_KEYS = {'style', 'animations', 'music', 'captions', 'scenes', 'devices', 'logo', 'outro', 'text', 'theme', 'aspect', 'pacing', 'other'}
 DEVICES = {'phone', 'laptop', 'both', 'none'}
 MAX_MOMENTS = 12
+MIN_MOMENT_S = 3.0  # a moment is never shorter than this; extra moments are merged/dropped instead
 # caption styles: bold / clean / pop; older builder names are still accepted
 CAP_STYLE = {'bold': 'bold', 'clean': 'clean', 'pop': 'pop', 'pop-in': 'pop', 'bold pop-in': 'bold', 'word highlight': 'pop', 'lower third': 'clean'}
 RASTER_EXT = ('.png', '.jpg', '.jpeg', '.webp', '.gif', '.bmp')
@@ -135,8 +136,9 @@ def validate_v2(spec):
     if not isinstance(ms, list) or not 1 <= len(ms) <= MAX_MOMENTS: bad(f'moments: 1 to {MAX_MOMENTS}')
     for i, m in enumerate(ms):
         k = f'moments[{i}]'
-        if not isinstance(m, dict) or set(m) - {'title', 'sub', 'device', 'media', 'media_start', 'phone_media', 'phone_media_start', 'phone_src', 'laptop_src', 'focus', 'phone_focus', 'zoom', 'phone_zoom', 'caption', 'chips', 'taps'}: bad(k + ' fields')
+        if not isinstance(m, dict) or set(m) - {'title', 'sub', 'device', 'media', 'media_start', 'phone_media', 'phone_media_start', 'phone_src', 'laptop_src', 'focus', 'phone_focus', 'zoom', 'phone_zoom', 'caption', 'chips', 'taps', 'priority'}: bad(k + ' fields')
         txt(m.get('title'), 80, k + '.title'); txt(m.get('sub'), 140, k + '.sub'); txt(m.get('caption'), 90, k + '.caption')
+        num(m.get('priority'), k + '.priority', 1, 5)
         num(m.get('zoom'), k + '.zoom', 1, 3); num(m.get('phone_zoom'), k + '.phone_zoom', 1, 3)
         if str(m.get('device', 'phone')).lower() not in DEVICES: bad(k + '.device must be phone, laptop, both or none')
         if isinstance(m.get('media'), dict):
@@ -316,10 +318,46 @@ def check_media_files(s):
             if e: errs.append(f'{k}: {Path(str(v)).name} is {e}')
     if errs: raise SystemExit('media rejected:\n  ' + '\n  '.join(errs))
 
+def fit_moments(s):
+    """Keep every moment >= MIN_MOMENT_S. In the synthesized film a moment is 8 beats (2 bars, 3.75 s at 128 BPM) and at
+    most 10; the 6-beat slot (2.81 s) is no longer used. When more moments are given than fit, the lowest-priority ones
+    (`priority` 1-5, default 3; ties: no media, fewer chips/taps, later in the film) are dropped and their chips merged
+    into the nearest kept neighbour that has room. Returns the warnings (also shown in qa.json `general`)."""
+    ms = s['_moments']; n = len(ms); L = s['length']
+    if s.get('music'):  # owner song: moment length = (L - intro - outro 6 s) / n, cuts snap up to ~0.55 s
+        intro = 5.4 if s.get('intro', 'bounce') == 'bounce' else 3.4
+        maxn = max(1, int((L - intro - 6.0) // (MIN_MOMENT_S + 0.4)))
+    else:
+        beat = 60 / 128; ib = 12 if s.get('intro', 'bounce') == 'bounce' else 8
+        maxn = max(1, (int(round(L / beat)) - ib - 12) // 8)
+    s['_maxn'] = maxn
+    if n <= maxn: return []
+    score = lambda i: (float(ms[i].get('priority', 3)), 1 if (ms[i].get('media') or ms[i].get('phone_media')) else 0,
+                       len(ms[i].get('chips') or []) + len(ms[i].get('taps') or []), -i)
+    drop = sorted(sorted(range(n), key=score)[:n - maxn])
+    keep = [i for i in range(n) if i not in drop]
+    merged, newidx = [], {}
+    t = lambda i: (str(ms[i].get('title') or '').replace('\n', ' ').replace('*', '')[:40])
+    for i in drop:
+        tgt = min(keep, key=lambda k: (abs(k - i), k > i))  # nearest kept moment, the earlier one on ties
+        newidx[i] = keep.index(tgt)
+        ch = [c for c in (ms[i].get('chips') or []) if c not in (ms[tgt].get('chips') or [])]
+        room = 4 - len(ms[tgt].get('chips') or [])
+        if ch and room > 0:
+            ms[tgt]['chips'] = list(ms[tgt].get('chips') or []) + ch[:room]
+            merged.append(f'chips {", ".join(ch[:room])} -> moment {tgt + 1} "{t(tgt)}"')
+    for k_, i in enumerate(keep): newidx[i] = k_
+    for a in s.get('_anims', []):  # animations pinned to a moment follow it (or the moment it merged into)
+        if isinstance(a, dict) and a.get('moment') and a['moment'] - 1 < n: a['moment'] = newidx[a['moment'] - 1] + 1
+    s['_moments'] = [ms[i] for i in keep]
+    return [f'{n} moments do not fit {int(L)} s at >= {MIN_MOMENT_S:.0f} s each (max {maxn}): moments were not shortened; '
+            f'left out the lowest-priority ' + '; '.join(f'moment {i + 1} "{t(i)}"' for i in drop)
+            + (f' (merged {"; ".join(merged)})' if merged else '') + '. Pick a longer length, fewer moments, or set `priority` 1-5 to choose']
+
 def alloc_beats(s, total, n, beat):
-    """Split `total` beats over n moments in 2-beat steps: 8 beats (2 bars, ~3.75 s) each when it fits, down to 4 beats
-    (1 bar) when many moments must fit, up to 10 beats when few do. Busy moments (chips/taps) get the longer slots."""
-    units = total // 2; base = max(2, min(5, units // n)); a = [base] * n
+    """Split `total` beats over n moments in 2-beat steps: 8 beats (2 bars, 3.75 s) each, up to 10 beats when few
+    moments are given. Never fewer than 8 (fit_moments drops extra moments first). Busy moments get the longer slots."""
+    units = total // 2; base = max(4, min(5, units // n)); a = [base] * n
     busy = sorted(range(n), key=lambda i: -(len(s['_moments'][i].get('chips') or []) + len(s['_moments'][i].get('taps') or [])))
     j = 0
     while sum(a) < units and any(x < 5 for x in a):
@@ -339,10 +377,7 @@ def plan_v2(s, beats, bpm):
         # over the moments (2 bars each when they fit; 1-1.5 bars when many; up to 2.5 bars, then a longer CTA hold, when few).
         beat = bar / 4; ib = 12 if s.get('intro', 'bounce') == 'bounce' else 8
         total = int(round(L / beat)); mid = total - ib - 12
-        maxn = mid // 4
-        if n > maxn:
-            s['_warn'].append(f'{n} moments do not fit {int(L)} s (max {maxn}); moments {maxn + 1}-{n} were left out: pick a longer length or fewer moments')
-            s['_moments'] = s['_moments'][:maxn]; n = maxn
+        s['_warn'] += s.get('_fitwarn', [])
         mb = alloc_beats(s, mid, n, beat)
         pad = mid - sum(mb)
         if pad > 0 and n * 8 < mid:
@@ -352,6 +387,7 @@ def plan_v2(s, beats, bpm):
         bounds = [round(b, 4) for b in bounds]
         L = s['length'] = round(total * beat, 4)
     else:
+        s['_warn'] += s.get('_fitwarn', [])
         intro = 5.4 if s.get('intro', 'bounce') == 'bounce' else 3.4; mlen = (L - intro - 6.0) / n
         bounds = [intro + i * mlen for i in range(n + 1)]
         if s['cuts_on_beat'] and beats:
@@ -360,7 +396,7 @@ def plan_v2(s, beats, bpm):
                 bars = beats[::4]
                 cand = [b for b in bars if abs(b - c) <= .55] or [b for b in beats if abs(b - c) <= .4]
                 c2 = min(cand, key=lambda b: abs(b - c)) if cand else c
-                out.append(round(max(c2, (out[-1] + 2.2) if out else 2.4), 4))
+                out.append(round(max(c2, (out[-1] + MIN_MOMENT_S) if out else 2.4), 4))
             bounds = out
     outro = bounds[-1]
     beat = bar / 4
@@ -370,6 +406,8 @@ def plan_v2(s, beats, bpm):
         cand = [b for b in beats if outro + 3.4 <= b <= outro + 4.2]
         if cand: hit = cand[0]
     hit = min(hit, L - 1.6)
+    short = [f'{i + 1} ({bounds[i + 1] - bounds[i]:.2f} s)' for i in range(n) if bounds[i + 1] - bounds[i] < MIN_MOMENT_S - 1e-6]
+    if short: s['_warn'].append(f'moments shorter than {MIN_MOMENT_S:.1f} s: ' + ', '.join(short))
     return {'intro': bounds[0], 'moments': [[bounds[i], bounds[i + 1]] for i in range(n)], 'outro': outro, 'hit': round(hit, 4), 'L': L, 'bar': bar}
 
 def extract_media(s, work):
@@ -412,6 +450,8 @@ def prepare(spec_path, work):
     for m in s['_moments']:
         for k in ('media', 'phone_media'):
             if m.get(k) and not str(m[k]).startswith(('file:', 'data:', '/')): m[k] = str((Path(spec_path).parent / m[k]).resolve())
+    s['_fitwarn'] = fit_moments(s)
+    for w_ in s['_fitwarn']: print('WARNING: ' + w_, file=sys.stderr)
     check_media_files(s)
     check_fit(s)
     if s.get('logo') and not s.get('logo_parts'):
@@ -509,6 +549,7 @@ def main():
     if s.get('_logo_status') == 'keyed': print('logo: opaque background keyed out automatically (check the stills)')
     failed = False
     if o.stills:
+        Path(o.stills).mkdir(parents=True, exist_ok=True)
         rep = asyncio.run(stills(s, o.stills))
         if general: rep['general'] = general
         bad = {k: v for k, v in rep.items() if v}
@@ -520,6 +561,7 @@ def main():
         else: print('QA: clean')
         if s.get('_synth'): shutil.copy(s['music'], Path(o.stills) / 'music.wav')
     if o.video:
+        Path(o.video).parent.mkdir(parents=True, exist_ok=True)
         trace = asyncio.run(video(s, o.video)); print('video:', o.video)
         qv = Path(o.video).with_suffix('.qa.json'); json.dump({'general': general, 'frames': trace}, open(qv, 'w'), indent=1)
         if trace or general:

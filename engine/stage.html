@@ -119,7 +119,8 @@ const CAM_OX=(land?.28:.5)*W, CAM_OY=.52*H, CAM_SMAX=1.08+.018, CAM_DX=W*.012, C
 const SAFE={l:CAM_OX-(CAM_OX-MX-CAM_DX)/CAM_SMAX, r:CAM_OX+(W-MX-CAM_DX-CAM_OX)/CAM_SMAX, t:CAM_OY-(CAM_OY-MY-CAM_DY)/CAM_SMAX, b:CAM_OY+(H-MY-CAM_DY-CAM_OY)/CAM_SMAX};
 if(land)SAFE.r-=20; // room for the per-beat lateral push (it peaks when the beat push-in is still 0)
 if(LY.ly<SAFE.t+4){const d=SAFE.t+4-LY.ly;LY.ly+=d;LY.tcy+=d} // brand corner stays inside the margin at full push
-const DEVBOX=(kind,o)=>{const w=kind==='ph'?PW:LW,h=kind==='ph'?PH:LIDH+DECK,of=kind==='ph'?.5:.6;const top=o.cy-h/2+of*h*(1-o.s);return {l:o.cx-w*o.s/2,r:o.cx+w*o.s/2,t:top-8,b:top+h*o.s+8}};
+const DEVBOX=(kind,o)=>{const w=kind==='ph'?PW:LW,h=kind==='ph'?PH:LIDH+DECK,of=kind==='ph'?.5:.6;const top=o.cy-h/2+of*h*(1-o.s);const pd=kind==='ph'?14:8; // the phone's side keys + tilt reach ~12 px past its frame at full push
+ return {l:o.cx-w*o.s/2,r:o.cx+w*o.s/2,t:top-pd,b:top+h*o.s+pd}};
 function fitGroup(parts){ // parts: [[kind,obj]]; scales/shifts the group so it sits inside SAFE (and right of the text column on landscape)
  const L0=land?Math.max(SAFE.l,LY.tx+LY.tw+24):SAFE.l, bx=()=>{const bs=parts.map(([k,o])=>DEVBOX(k,o));return {l:Math.min(...bs.map(b=>b.l)),r:Math.max(...bs.map(b=>b.r)),t:Math.min(...bs.map(b=>b.t)),b:Math.max(...bs.map(b=>b.b))}};
  for(let it=0;it<6;it++){const b=bx();const f=Math.min(1,(SAFE.r-L0)/(b.r-b.l),(SAFE.b-SAFE.t)/(b.b-b.t));

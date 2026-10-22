@@ -1,0 +1,25 @@
+{
+ "product": {"name": "Nimbus", "link": "https://nimbus.example"},
+ "style": "keynote",
+ "theme": "light",
+ "foreground": "phone",
+ "aspect": "9:16",
+ "length": 15,
+ "accent": "blue",
+ "brand_colors": "from_logo",
+ "logo": "logo.png",
+ "logo_has_name": false,
+ "captions": {"on": true, "style": "word highlight"},
+ "cuts_on_beat": true,
+ "scene_order": [1, 2, 3, 4],
+ "screenshots": ["shot-1.png", "shot-2.png"],
+ "music": "song.mp3",
+ "music_start": 0,
+ "music_credit": "Track Name by Artist (Pixabay Content License)",
+ "scenes": [
+  {"title": "Plan your week *in seconds.*", "sub": "Nimbus turns notes into a calendar.", "caption": "Meet Nimbus"},
+  {"kicker": "Capture", "title": "Drop in anything.", "sub": "Notes, links, screenshots.", "caption": "Everything lands in one place"},
+  {"kicker": "Plan", "title": "Your week, *sorted.*", "bullets": ["Auto time blocks", "Shared lists", "Works offline"], "caption": "It plans while you work"},
+  {"title": "Try *Nimbus* free", "cta": "nimbus.example", "caption": "Try it free today"}
+ ]
+}

@@ -22,6 +22,10 @@
 
 If the download or the hash check fails, stop and report it. Never rewrite the code.
 
+## The render engine
+
+`engine/` turns a JSON spec into preview stills and a promo MP4 (Playwright + ffmpeg, beat-synced cuts, brand colors from a logo, light/dark themes). Bots pin it by **full commit SHA** (release tag `engine-v1`) and verify every file with `engine/SHA256SUMS` before running. See [engine/README.md](engine/README.md).
+
 ## Assets
 
 - `assets/stills/`: preview stills
